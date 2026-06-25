@@ -41,16 +41,22 @@ chrome.windows.onRemoved.addListener((closedId) => {
 // ---------- 未读角标 ----------
 // 页面（popup.js）无法直接设角标，必须经 background。约定两种消息：
 //   {type:"incoming"} 未读 +1    {type:"seen"} 清零
-let unread = 0;
-
+//
+// 注意：MV3 service worker 空闲会被回收，内存里的计数会丢。所以不缓存计数，
+// 每次从徽章文本本身读当前值再 +1——徽章文本由 Chrome 持久保存，不受 SW 回收影响。
 function setBadge(n) {
-  unread = n;
   chrome.action.setBadgeText({ text: n > 0 ? String(n) : "" });
   chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" }); // 与主题紫一致
 }
 
+async function bumpBadge() {
+  const text = await chrome.action.getBadgeText({});
+  const cur = parseInt(text, 10) || 0;
+  setBadge(cur + 1);
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg.type !== "string") return;
-  if (msg.type === "incoming") setBadge(unread + 1);
+  if (msg.type === "incoming") bumpBadge();
   else if (msg.type === "seen") setBadge(0);
 });

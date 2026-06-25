@@ -122,6 +122,31 @@ export async function heartbeat(me) {
   }
 }
 
+// 下线：清空自己的 presence 行，让对方立即看到离线（否则要等 15s 心跳超时）。
+export async function clearPresence(me) {
+  try {
+    const found = await mcpCall("find_cells", {
+      nodeId: NODE_ID,
+      sheetId: SHEET_ID,
+      text: me,
+      matchEntireCell: true,
+    });
+    const cell = (found.matchedCells || []).find((c) =>
+      /^B\d+$/.test(c.a1Notation || "")
+    );
+    if (!cell) return;
+    const rowNum = Number(cell.a1Notation.replace(/[^\d]/g, ""));
+    await mcpCall("update_range", {
+      nodeId: NODE_ID,
+      sheetId: SHEET_ID,
+      rangeAddress: `A${rowNum}:E${rowNum}`,
+      values: [["", "", "", "", ""]],
+    });
+  } catch {
+    /* 清理失败忽略：心跳超时后对方自然会判离线 */
+  }
+}
+
 // 在线用户列表：最近 staleMs 内有心跳、且不是自己的 presence 行的用户名。
 export async function listUsers(me, staleMs = 15000) {
   const rows = await readAll();

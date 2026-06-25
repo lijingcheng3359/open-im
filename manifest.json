@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "open-im",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "无服务端 P2P 即时通讯：WebRTC 直连聊天，借钉钉表格做信令白板。",
   "action": {
     "default_title": "open-im",
@@ -24,5 +24,8 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://mcp-gw.dingtalk.com/*"
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
 }

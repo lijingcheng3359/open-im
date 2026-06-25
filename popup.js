@@ -6,11 +6,22 @@ import {
   sendSignal,
   readMySignals,
   clearMySignals,
+  clearPresence,
 } from "./src/signaling.js";
 
 // 列表刷新与拒绝后跳转的延时（毫秒）。集中放此处便于调整。
 const LIST_REFRESH_MS = 3000;
 const REJECT_BACK_MS = 1200;
+
+// 信令表是公共白板，任何人可写任意行。喂给 WebRTC 前做基本结构校验，
+// 避免畸形 / 恶意 payload 让 setRemoteDescription / addIceCandidate 抛错打断握手。
+function isValidSdp(p) {
+  return p && typeof p === "object" && typeof p.sdp === "string" && typeof p.type === "string";
+}
+function isValidIce(p) {
+  // ICE candidate 至少要有 candidate 字段（字符串）。
+  return p && typeof p === "object" && typeof p.candidate === "string";
+}
 import { RtcPeer } from "./src/rtc.js";
 
 const $ = (id) => document.getElementById(id);
@@ -324,11 +335,19 @@ async function handleSignal(s) {
       log("忙于和", peerName, "对话，忽略", s.from, "的 offer");
       return;
     }
+    if (!isValidSdp(s.payload)) {
+      log("收到非法 offer payload，忽略 from", s.from);
+      return;
+    }
     if (peer) log("已有 peer，收到", s.from, "新 offer，将重建应答");
     await answerCall(s.from, s.payload);
   } else if (s.type === "answer") {
     if (!peer) {
       log("收到 answer 但本地无 peer，忽略");
+      return;
+    }
+    if (!isValidSdp(s.payload)) {
+      log("收到非法 answer payload，忽略");
       return;
     }
     await peer.acceptAnswer(s.payload);
@@ -338,6 +357,10 @@ async function handleSignal(s) {
   } else if (s.type === "ice") {
     if (!peer) {
       log("收到 ICE 但无 peer，忽略");
+      return;
+    }
+    if (!isValidIce(s.payload)) {
+      log("收到非法 ICE payload，忽略");
       return;
     }
     if (remoteDescSet) {
@@ -503,6 +526,8 @@ $("logoutBtn").addEventListener("click", () => {
   clearInterval(listTimer);
   clearInterval(signalTimer);
   heartbeatTimer = listTimer = signalTimer = null;
+  // 清空自己的 presence 行，让对方立即看到离线（先于把 me 清空）。
+  clearPresence(me).catch(() => {});
   resetSession();
   me = "";
   chrome.storage.local.remove(NICK_KEY); // 忘记昵称：下次打开不再自动上线

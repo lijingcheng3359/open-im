@@ -41,6 +41,11 @@ export class RtcPeer {
     ch.onopen = () => this.onStateChange("connected");
     ch.onclose = () => this.onStateChange("disconnected");
     ch.onmessage = (e) => this.onMessage(e.data);
+    // DataChannel 出错时此前静默无感知；上报为 failed 让上层提示。
+    ch.onerror = (e) => {
+      console.warn("[rtc] DataChannel error:", e && e.error);
+      this.onStateChange("failed");
+    };
   }
 
   async createOffer() {
