@@ -7,6 +7,10 @@ import {
   readMySignals,
   clearMySignals,
 } from "./src/signaling.js";
+
+// 列表刷新与拒绝后跳转的延时（毫秒）。集中放此处便于调整。
+const LIST_REFRESH_MS = 3000;
+const REJECT_BACK_MS = 1200;
 import { RtcPeer } from "./src/rtc.js";
 
 const $ = (id) => document.getElementById(id);
@@ -77,7 +81,7 @@ async function doLogin(nick, auto) {
 
   // 启动三个循环：心跳、刷新列表、轮询发给我的信令
   heartbeatTimer = setInterval(() => heartbeat(me).catch(() => {}), HEARTBEAT_MS);
-  listTimer = setInterval(refreshList, 3000);
+  listTimer = setInterval(refreshList, LIST_REFRESH_MS);
   signalTimer = setInterval(pollSignals, POLL_INTERVAL_MS);
   refreshList();
   pollSignals();
@@ -311,7 +315,7 @@ async function handleSignal(s) {
     setTimeout(() => {
       show("listView");
       refreshList();
-    }, 1200);
+    }, REJECT_BACK_MS);
   } else if (s.type === "offer") {
     // 收到 offer：作为 callee 应答。
     // 即使已有 peer（可能是上一次残留），只要是同一个人发来的新 offer，
@@ -343,6 +347,11 @@ async function handleSignal(s) {
       log("remoteDesc 未就绪，缓冲 ICE");
       pendingIce.push(s.payload);
     }
+  } else if (s.type === "error") {
+    // 对方握手出错时会回报 error 信令；记日志并提示，便于排查（此前被静默忽略）。
+    const msg = (s.payload && s.payload.msg) || "未知错误";
+    log("对方报告握手错误:", msg);
+    setChatStatus("对方连接出错：" + msg);
   }
 }
 
@@ -478,6 +487,10 @@ function resetSession() {
   processedSignals.clear();
   clearTimeout(callTimeout);
   hideInvite();
+  // 清掉表里自己相关的信令行（offer/answer/ice/call/error），防止信令表无限增长。
+  // fire-and-forget：不阻塞重置；失败忽略，下次上线时还会再清一次。
+  // 仅在已上线（me 非空）时清，避免下线后误调用。
+  if (me) clearMySignals(me).catch(() => {});
   // 推进时间基线：下一次握手只认此刻之后的信令，彻底忽略上一轮的残留行
   //（钉钉表格行号会复用，必须靠时间戳而非行号来隔离不同会话）。
   sessionStart = Date.now();
@@ -533,3 +546,14 @@ function clearUnread() {
 window.addEventListener("focus", clearUnread);
 // 打开时若当前就有焦点，先清一次旧角标。
 if (document.hasFocus()) clearUnread();
+
+// ---------- 轮询调速：失焦时拉长信令轮询，省请求；聚焦时恢复灵敏 ----------
+// 信令表是共享公共白板，频繁轮询既费网关又放大表增长；窗口没在看时不必那么勤。
+const POLL_BLUR_MS = 8000;
+function setPollInterval(ms) {
+  if (!signalTimer) return; // 未上线时无定时器，跳过
+  clearInterval(signalTimer);
+  signalTimer = setInterval(pollSignals, ms);
+}
+window.addEventListener("focus", () => setPollInterval(POLL_INTERVAL_MS));
+window.addEventListener("blur", () => setPollInterval(POLL_BLUR_MS));
