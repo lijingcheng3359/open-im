@@ -1,0 +1,29 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 暖绿圆底 -->
+  <rect x="2" y="2" width="124" height="124" rx="28" fill="url(#bg)"/>
+
+  <!-- 手持麦克风（白色剪影），整体居中、偏大，小尺寸也认得出 -->
+  <g fill="#ffffff">
+    <!-- 麦头：圆头 + 直筒，整体胶囊形 -->
+    <rect x="46" y="22" width="36" height="58" rx="18"/>
+    <!-- 颈：麦头到手柄的细杆 -->
+    <rect x="60" y="78" width="8" height="14"/>
+    <!-- 底座 / 手柄 -->
+    <rect x="48" y="90" width="32" height="9" rx="4.5"/>
+    <rect x="58" y="97" width="12" height="20" rx="3"/>
+  </g>
+
+  <!-- 麦头网格横线（绿色，反衬出网罩质感）。16px 下会糊掉但不影响主体剪影 -->
+  <g stroke="#7c3aed" stroke-width="4" stroke-linecap="round">
+    <line x1="50" y1="38" x2="78" y2="38"/>
+    <line x1="50" y1="50" x2="78" y2="50"/>
+    <line x1="50" y1="62" x2="78" y2="62"/>
+  </g>
+</svg>
