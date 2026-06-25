@@ -241,11 +241,7 @@ function startPeer(isCaller) {
   remoteDescSet = false;
   pendingIce.length = 0;
   peer = new RtcPeer(isCaller, {
-    onMessage: (text) => {
-      addMsg(text, "peer");
-      // 窗口没聚焦（被遮挡/最小化/切走了）才累加工具栏未读角标；正看着就不打扰。
-      if (!document.hasFocus()) notifyUnread();
-    },
+    onMessage: onDataMessage,
     onStateChange: onRtcState,
     onIceCandidate: (cand) => {
       log("本地 ICE candidate，发往", peerName);
@@ -412,11 +408,33 @@ function enableChat(on) {
   if (on) $("input").focus();
 }
 
-function addMsg(text, kind, extraClass = "") {
+function addMsg(text, kind, extraClass = "", mid = null) {
   const div = document.createElement("div");
   div.className = "msg " + kind + (extraClass ? " " + extraClass : "");
-  div.textContent = text;
-  $("messages").appendChild(div);
+  // 文本用 textContent 注入避免 XSS；「我」的气泡再追加一个已读勾标记。
+  const span = document.createElement("span");
+  span.textContent = text;
+  div.appendChild(span);
+  if (kind === "me" && mid) {
+    div.dataset.mid = mid;
+    const tick = document.createElement("span");
+    tick.className = "tick"; // 单 ✓ = 已送达；加 .read 变双 ✓✓ = 已读
+    tick.textContent = "✓";
+    div.appendChild(tick);
+  }
+  insertBeforeTyping(div); // 保证 typing 气泡始终在最底部
+  scrollMessages();
+}
+
+// 把节点插到 messages 末尾，但若存在 typing 气泡则插到它前面。
+function insertBeforeTyping(node) {
+  const box = $("messages");
+  const bubble = box.querySelector(".typing-bubble");
+  if (bubble) box.insertBefore(node, bubble);
+  else box.appendChild(node);
+}
+
+function scrollMessages() {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
@@ -427,11 +445,108 @@ $("input").addEventListener("keydown", (e) => {
 function sendMessage() {
   const text = $("input").value.trim();
   if (!text || !peer) return;
-  if (peer.send(text)) {
-    addMsg(text, "me");
+  const id = crypto.randomUUID();
+  // 发结构化消息：{k:"msg", id, text}。send 成功即视为已送达，给单 ✓。
+  if (peer.send(JSON.stringify({ k: "msg", id, text }))) {
+    addMsg(text, "me", "", id);
     $("input").value = "";
+    sendTyping(false); // 发出后立即清除自己的输入态
   } else {
     setChatStatus("未连接，无法发送");
+  }
+}
+
+// ---------- DataChannel 收消息：解析带类型协议，向后兼容纯文本 ----------
+function onDataMessage(raw) {
+  let m = null;
+  try {
+    m = JSON.parse(raw);
+  } catch {
+    /* 非 JSON：按旧式纯文本聊天消息处理 */
+  }
+  if (!m || typeof m.k !== "string") {
+    // 兼容：旧版本/异常数据当普通聊天消息显示
+    addMsg(String(raw), "peer");
+    if (!document.hasFocus()) notifyUnread();
+    return;
+  }
+  if (m.k === "msg") {
+    removeTypingBubble(); // 对方发出消息，输入态结束
+    addMsg(String(m.text ?? ""), "peer");
+    if (!document.hasFocus()) notifyUnread();
+    // 已读回执：聚焦则立即回，否则入队等聚焦补发
+    if (m.id) {
+      if (document.hasFocus()) sendRead(m.id);
+      else pendingReads.push(m.id);
+    }
+  } else if (m.k === "typing") {
+    if (m.on) showTypingBubble();
+    else removeTypingBubble();
+  } else if (m.k === "read") {
+    markRead(m.id);
+  }
+}
+
+// ---------- 输入中提示（发送侧）----------
+let typingSent = false; // 当前是否已告知对方“正在输入”
+let typingStopTimer = null;
+const TYPING_STOP_MS = 3000; // 停手多久判定停止输入
+
+function sendTyping(on) {
+  if (!peer) return;
+  if (on === typingSent) return; // 状态无变化不重复发
+  typingSent = on;
+  peer.send(JSON.stringify({ k: "typing", on }));
+}
+
+$("input").addEventListener("input", () => {
+  if (!peer) return;
+  if ($("input").value.trim()) {
+    sendTyping(true);
+    clearTimeout(typingStopTimer);
+    typingStopTimer = setTimeout(() => sendTyping(false), TYPING_STOP_MS);
+  } else {
+    clearTimeout(typingStopTimer);
+    sendTyping(false);
+  }
+});
+
+// ---------- 输入中气泡（接收侧）----------
+function showTypingBubble() {
+  const box = $("messages");
+  if (box.querySelector(".typing-bubble")) return; // 已有则不重复
+  const bubble = document.createElement("div");
+  bubble.className = "msg peer typing-bubble";
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    bubble.appendChild(dot);
+  }
+  box.appendChild(bubble);
+  scrollMessages();
+}
+function removeTypingBubble() {
+  const bubble = $("messages").querySelector(".typing-bubble");
+  if (bubble) bubble.remove();
+}
+
+// ---------- 已读回执 ----------
+const pendingReads = []; // 失焦时收到的消息 id，聚焦后补发已读
+function sendRead(id) {
+  if (peer) peer.send(JSON.stringify({ k: "read", id }));
+}
+function flushPendingReads() {
+  if (!peer || !pendingReads.length) return;
+  for (const id of pendingReads) sendRead(id);
+  pendingReads.length = 0;
+}
+// 把我方对应 id 的气泡标记为已读（双 ✓✓）
+function markRead(id) {
+  if (!id) return;
+  const el = $("messages").querySelector(`.msg.me[data-mid="${CSS.escape(id)}"] .tick`);
+  if (el) {
+    el.textContent = "✓✓";
+    el.classList.add("read");
   }
 }
 
@@ -510,6 +625,11 @@ function resetSession() {
   processedSignals.clear();
   clearTimeout(callTimeout);
   hideInvite();
+  // 清理输入态与待回执队列，避免污染下一次会话。
+  clearTimeout(typingStopTimer);
+  typingSent = false;
+  pendingReads.length = 0;
+  removeTypingBubble();
   // 清掉表里自己相关的信令行（offer/answer/ice/call/error），防止信令表无限增长。
   // fire-and-forget：不阻塞重置；失败忽略，下次上线时还会再清一次。
   // 仅在已上线（me 非空）时清，避免下线后误调用。
@@ -567,8 +687,11 @@ function clearUnread() {
   }
 }
 
-// 窗口获得焦点即视为已读，清零角标。
-window.addEventListener("focus", clearUnread);
+// 窗口获得焦点即视为已读：清零角标，并补发失焦期间收到消息的已读回执。
+window.addEventListener("focus", () => {
+  clearUnread();
+  flushPendingReads();
+});
 // 打开时若当前就有焦点，先清一次旧角标。
 if (document.hasFocus()) clearUnread();
 

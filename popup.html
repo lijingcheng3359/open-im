@@ -198,6 +198,38 @@
         padding: 4px 12px;
         border-radius: 10px;
       }
+      /* 已读勾标记：单 ✓ 已送达 → 双 ✓✓（.read）已读 */
+      .msg.me .tick {
+        margin-left: 6px;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+        vertical-align: bottom;
+      }
+      .msg.me .tick.read { color: #fff; }
+      /* 输入中气泡：三个点跳动，外观同对方气泡 */
+      .typing-bubble {
+        align-self: flex-start;
+        background: var(--peer);
+        border: 1px solid var(--border);
+        border-bottom-left-radius: 4px;
+        padding: 10px 12px !important;
+        display: flex;
+        gap: 4px;
+        align-items: center;
+      }
+      .typing-bubble .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--muted);
+        animation: typingBlink 1.2s infinite ease-in-out;
+      }
+      .typing-bubble .dot:nth-child(2) { animation-delay: 0.2s; }
+      .typing-bubble .dot:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes typingBlink {
+        0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+        30% { opacity: 1; transform: translateY(-3px); }
+      }
       footer {
         display: flex;
         gap: 8px;
