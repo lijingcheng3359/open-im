@@ -571,6 +571,19 @@ function showInvite(from) {
   t.textContent = "";
   t.append(b, " 邀请你聊天");
   $("inviteOverlay").classList.add("show");
+
+  // 来电时把窗口提到前台（最小化则还原），避免窗口被盖住时看不到邀请。
+  try {
+    chrome.windows.getCurrent().then((win) => {
+      if (win && win.id != null) {
+        const info = { focused: true };
+        if (win.state === "minimized") info.state = "normal";
+        chrome.windows.update(win.id, info);
+      }
+    });
+  } catch (e) {
+    console.warn("来电聚焦窗口失败:", e);
+  }
 }
 
 function hideInvite() {
