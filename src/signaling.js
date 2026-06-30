@@ -2,7 +2,7 @@
 // 表结构每行 5 列：[kind, a, b, c, ts]
 //   presence 行: [presence, 用户名, "", "", 最后心跳ts]   —— 每人固定占 1 行，心跳 update 覆盖
 //   signal   行: [signal, from, to, base64(JSON{type,payload}), ts] —— append 追加
-import { GATEWAY_URL, NODE_ID, SHEET_ID } from "./config.js";
+import { GATEWAY_URL, GATEWAY_TIMEOUT_MS, NODE_ID, SHEET_ID } from "./config.js";
 
 let rpcId = 1;
 
@@ -24,14 +24,29 @@ async function mcpCallRaw(name, args) {
     method: "tools/call",
     params: { name, arguments: args },
   };
-  const res = await fetch(GATEWAY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(body),
-  });
+  // 超时保护：串行队列里一个无超时的 fetch 卡住会冻结全部信令。
+  // 用 AbortController 在 GATEWAY_TIMEOUT_MS 后中止，让本次失败、队列继续。
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GATEWAY_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new Error(`网关请求超时（${GATEWAY_TIMEOUT_MS}ms）`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`网关 HTTP ${res.status}`);
   const json = await res.json();
   if (json.error) throw new Error(`MCP 错误: ${JSON.stringify(json.error)}`);

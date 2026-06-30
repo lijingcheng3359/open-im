@@ -59,6 +59,19 @@ let peer = null; // 当前 RtcPeer
 let peerName = ""; // 当前对话对方昵称
 let remoteDescSet = false;
 let sessionStart = 0; // 本次上线时间；只处理此后产生的信令，忽略表里历史脏数据
+// sessionStart 同时充当「会话 epoch」：resetSession() 每次推进它。
+// 握手异步续体（createOffer/sendSignal 等）在 await 前后可能跨越一次 reset，
+// 用进入时捕获的 epoch 比对当前值，不一致说明会话已被重置，应放弃以免污染新会话。
+function sessionEpoch() {
+  return sessionStart;
+}
+function sessionChanged(epoch) {
+  if (epoch !== sessionStart) {
+    log("会话已重置（epoch", epoch, "→", sessionStart, "），放弃过期的握手续体");
+    return true;
+  }
+  return false;
+}
 const pendingIce = [];
 const processedSignals = new Set(); // 已处理信令行 key
 
@@ -199,6 +212,7 @@ async function startHandshakeAsOfferer(to) {
     return;
   }
   offering = true;
+  const epoch = sessionEpoch(); // 捕获会话基线，await 后用它判断会话是否已被重置
   try {
     openChat(to, "连接中…");
     startPeer(true);
@@ -208,9 +222,12 @@ async function startHandshakeAsOfferer(to) {
       log("已创建 offer，sdp 长度=", offer && offer.sdp && offer.sdp.length);
     } catch (e) {
       log("createOffer 抛错:", e);
-      reportError(to, "createOffer: " + e.message);
+      if (!sessionChanged(epoch)) reportError(to, "createOffer: " + e.message);
       return;
     }
+    // createOffer 期间可能发生 reset（用户返回/超时/新邀请）：此时 peer/me 已变，
+    // 继续写 offer 会用旧身份污染新会话，直接放弃。
+    if (sessionChanged(epoch)) return;
     if (!isValidSizedSdp(offer)) {
       reportError(to, "offer 不合法或超大小限制");
       return;
@@ -220,7 +237,7 @@ async function startHandshakeAsOfferer(to) {
       log("offer 已写入 →", to);
     } catch (e) {
       log("sendSignal(offer) 抛错:", e);
-      reportError(to, "sendSignal(offer): " + e.message);
+      if (!sessionChanged(epoch)) reportError(to, "sendSignal(offer): " + e.message);
     }
   } finally {
     offering = false;
@@ -244,14 +261,18 @@ async function answerCall(from, offer) {
     return;
   }
   answering = true;
+  const epoch = sessionEpoch(); // 捕获会话基线
   log(`收到 ${from} 的 offer，作为 callee 应答`);
   openChat(from, "连接中…");
   startPeer(false); // 我是 callee
   try {
     const answer = await peer.acceptOfferCreateAnswer(offer);
+    // 生成 answer 期间可能发生 reset：此时 peer/me 已变，放弃以免污染新会话。
+    if (sessionChanged(epoch)) return;
     remoteDescSet = true;
     log("已 setRemoteDescription(offer) 并创建 answer，flush 缓冲 ICE:", pendingIce.length);
     await flushPendingIce();
+    if (sessionChanged(epoch)) return;
     if (!isValidSizedSdp(answer)) {
       reportError(from, "answer 不合法或超大小限制");
       return;
@@ -261,6 +282,7 @@ async function answerCall(from, offer) {
     addMsg(`已接通 ${from}`, "sys");
   } catch (e) {
     log("应答失败:", e);
+    if (sessionChanged(epoch)) return; // 会话已重置则不再操作新会话的 UI/表
     setChatStatus("应答失败：" + e.message);
     reportError(from, "answerCall: " + e.message); // 把失败原因写进表，便于排查
   } finally {
@@ -362,14 +384,21 @@ async function handleSignal(s) {
     }, REJECT_BACK_MS);
   } else if (s.type === "offer") {
     // 收到 offer：作为 callee 应答。
-    // 即使已有 peer（可能是上一次残留），只要是同一个人发来的新 offer，
-    // 就重建 peer 重新应答——这能修复「对方退出重进后连不上」。
     if (peer && peerName && peerName !== s.from) {
       log("忙于和", peerName, "对话，忽略", s.from, "的 offer");
       return;
     }
     if (!isValidSdp(s.payload)) {
       log("收到非法 offer payload，忽略 from", s.from);
+      return;
+    }
+    // 已和同一个人在握手中（peer 存在且已 setRemoteDescription）时不要重建：
+    // startPeer 会清空 pendingIce，把新 offer 后紧跟、已缓冲的 ICE 候选丢掉，
+    // 反而导致握手失败。重复/乱序的 offer 直接忽略，沿用进行中的 peer。
+    // 只有「没有 peer」或「peer 尚未推进到 remoteDescSet（残留半成品）」时才重建应答，
+    // 这仍能修复「对方退出重进后连不上」。
+    if (peer && peerName === s.from && remoteDescSet) {
+      log("已与", s.from, "握手中，忽略重复 offer（保留缓冲 ICE）");
       return;
     }
     if (peer) log("已有 peer，收到", s.from, "新 offer，将重建应答");

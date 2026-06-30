@@ -84,7 +84,23 @@ export class RtcPeer {
   }
 
   close() {
-    if (this.channel) this.channel.close();
+    // 先解绑所有回调再关闭：关闭 channel/pc 会触发 onclose/onconnectionstatechange，
+    // 若不解绑，这些回调会在主动关闭之后反向重入上层（如 onStateChange("disconnected")），
+    // 导致 UI 状态错乱、留下永不清理的僵尸 peer。
+    if (this.channel) {
+      this.channel.onopen = null;
+      this.channel.onclose = null;
+      this.channel.onmessage = null;
+      this.channel.onerror = null;
+      this.channel.close();
+      this.channel = null;
+    }
+    this.pc.onicecandidate = null;
+    this.pc.onconnectionstatechange = null;
+    this.pc.oniceconnectionstatechange = null;
+    this.pc.onicegatheringstatechange = null;
+    this.pc.onsignalingstatechange = null;
+    this.pc.ondatachannel = null;
     this.pc.close();
   }
 }

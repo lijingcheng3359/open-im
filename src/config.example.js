@@ -20,3 +20,7 @@ export const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 // 信令轮询周期（毫秒）。
 export const POLL_INTERVAL_MS = 2000;
+
+// 单次网关请求超时（毫秒）。所有网关调用走同一条串行队列，
+// 一个卡住的 fetch 会冻结全部信令，必须有超时让它快速失败、队列继续。
+export const GATEWAY_TIMEOUT_MS = 10000;
