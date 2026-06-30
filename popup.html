@@ -206,14 +206,18 @@
         padding: 4px 12px;
         border-radius: 10px;
       }
-      /* 已读勾标记：单 ✓ 已送达 → 双 ✓✓（.read）已读 */
+      /* 已读状态文字：默认「已送达」（半透明），对方读后变「已读」并高亮 */
       .msg.me .tick {
-        margin-left: 6px;
+        margin-left: 8px;
         font-size: 11px;
         color: rgba(255, 255, 255, 0.6);
         vertical-align: bottom;
+        white-space: nowrap;
       }
-      .msg.me .tick.read { color: #fff; }
+      .msg.me .tick.read {
+        color: #fff;
+        font-weight: 600;
+      }
       /* 输入中气泡：三个点跳动，外观同对方气泡 */
       .typing-bubble {
         align-self: flex-start;

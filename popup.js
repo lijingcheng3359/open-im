@@ -492,15 +492,15 @@ function enableChat(on) {
 function addMsg(text, kind, extraClass = "", mid = null) {
   const div = document.createElement("div");
   div.className = "msg " + kind + (extraClass ? " " + extraClass : "");
-  // 文本用 textContent 注入避免 XSS；「我」的气泡再追加一个已读勾标记。
+  // 文本用 textContent 注入避免 XSS；「我」的气泡再追加一个已读状态文字。
   const span = document.createElement("span");
   span.textContent = text;
   div.appendChild(span);
   if (kind === "me" && mid) {
     div.dataset.mid = mid;
     const tick = document.createElement("span");
-    tick.className = "tick"; // 单 ✓ = 已送达；加 .read 变双 ✓✓ = 已读
-    tick.textContent = "✓";
+    tick.className = "tick"; // 「已送达」；加 .read 变「已读」并高亮
+    tick.textContent = "已送达";
     div.appendChild(tick);
   }
   insertBeforeTyping(div); // 保证 typing 气泡始终在最底部
@@ -521,13 +521,19 @@ function scrollMessages() {
 
 $("sendBtn").addEventListener("click", sendMessage);
 $("input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendMessage();
+  // 中文输入法（IME）下回车是用来确认候选/结束组合的，此时 isComposing 为真
+  // （部分浏览器仅体现为 keyCode 229）。若不拦住，会在组合结束前就把半成品发出去并清空，
+  // 随后 IME 又把文字补写回输入框，造成「发出去了但输入框还残留」。组合中直接忽略。
+  if (e.key !== "Enter") return;
+  if (e.isComposing || e.keyCode === 229) return;
+  e.preventDefault(); // 避免回车在输入框里再插入换行
+  sendMessage();
 });
 function sendMessage() {
   const text = $("input").value.trim();
   if (!text || !peer) return;
   const id = crypto.randomUUID();
-  // 发结构化消息：{k:"msg", id, text}。send 成功即视为已送达，给单 ✓。
+  // 发结构化消息：{k:"msg", id, text}。send 成功即视为已送达，标「已送达」。
   if (peer.send(JSON.stringify({ k: "msg", id, text }))) {
     addMsg(text, "me", "", id);
     $("input").value = "";
@@ -621,12 +627,12 @@ function flushPendingReads() {
   for (const id of pendingReads) sendRead(id);
   pendingReads.length = 0;
 }
-// 把我方对应 id 的气泡标记为已读（双 ✓✓）
+// 把我方对应 id 的气泡从「已送达」标记为「已读」并高亮
 function markRead(id) {
   if (!id) return;
   const el = $("messages").querySelector(`.msg.me[data-mid="${CSS.escape(id)}"] .tick`);
   if (el) {
-    el.textContent = "✓✓";
+    el.textContent = "已读";
     el.classList.add("read");
   }
 }
