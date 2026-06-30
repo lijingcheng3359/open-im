@@ -76,6 +76,14 @@
         font-weight: 600;
       }
       #loginView .primary:hover { background: #f3efff; }
+      #loginView .login-error {
+        color: #fff;
+        font-size: 12px;
+        margin-top: 8px;
+        min-height: 16px;
+        text-align: center;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      }
       .primary {
         background: var(--accent-grad);
         color: #fff;
@@ -309,8 +317,9 @@
       <div class="brand">🎤</div>
       <h2>open-im</h2>
       <div class="tagline">无服务端 · P2P 直连聊天</div>
-      <input id="nick" placeholder="输入昵称上线" />
+      <input id="nick" placeholder="输入昵称上线" maxlength="20" />
       <button id="loginBtn" class="primary">上线</button>
+      <div id="loginError" class="login-error"></div>
     </div>
 
     <!-- 在线列表 -->

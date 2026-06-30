@@ -8,6 +8,7 @@ import {
   clearMySignals,
   clearPresence,
 } from "./src/signaling.js";
+import { RtcPeer } from "./src/rtc.js";
 
 // 列表刷新与拒绝后跳转的延时（毫秒）。集中放此处便于调整。
 const LIST_REFRESH_MS = 3000;
@@ -22,11 +23,30 @@ function isValidIce(p) {
   // ICE candidate 至少要有 candidate 字段（字符串）。
   return p && typeof p === "object" && typeof p.candidate === "string";
 }
-import { RtcPeer } from "./src/rtc.js";
+
+// 防止把超大 payload 写入公共信令表（SDP 正常约 3-8KB，给足余量；ICE 候选通常几百字节）。
+const MAX_SDP_LEN = 16384;
+const MAX_ICE_LEN = 4096;
+function isValidSizedSdp(p) {
+  return isValidSdp(p) && p.sdp.length <= MAX_SDP_LEN;
+}
+function isValidSizedIce(p) {
+  return isValidIce(p) && JSON.stringify(p).length <= MAX_ICE_LEN;
+}
+
+// 昵称校验：避免空、过长、CSV 分隔字符（逗号/引号/换行）以及首尾空格。
+function validateNick(nick) {
+  if (!nick) return "昵称不能为空";
+  if (nick.length > NICK_MAX_LEN) return `昵称不能超过 ${NICK_MAX_LEN} 个字符`;
+  if (/[,\n\r"]/.test(nick)) return "昵称不能包含逗号、引号或换行";
+  if (nick.trim() !== nick) return "昵称首尾不能有空格";
+  return "";
+}
 
 const $ = (id) => document.getElementById(id);
 const HEARTBEAT_MS = 5000;
 const NICK_KEY = "open-im:nick"; // chrome.storage 里保存昵称的键，用于重开 popup 自动上线
+const NICK_MAX_LEN = 20;
 
 // 带时间戳和身份的日志，便于两个 popup 对照排查握手。
 function log(...args) {
@@ -48,7 +68,9 @@ let signalTimer = null;
 
 let pendingInviteFrom = null; // 收到来电邀请、尚未接听/拒绝的对方
 let callTimeout = null; // A 侧呼叫超时计时器
+let inviteTimeout = null; // 被叫侧来电浮层超时计时器
 const CALL_TIMEOUT_MS = 30000;
+const INVITE_TIMEOUT_MS = 30000;
 
 // ---------- 视图切换 ----------
 function show(view) {
@@ -62,10 +84,17 @@ $("loginBtn").addEventListener("click", login);
 $("nick").addEventListener("keydown", (e) => {
   if (e.key === "Enter") login();
 });
+$("nick").addEventListener("input", () => {
+  $("loginError").textContent = "";
+});
 
 async function login() {
   const nick = $("nick").value.trim();
-  if (!nick) return;
+  const err = validateNick(nick);
+  if (err) {
+    $("loginError").textContent = err;
+    return;
+  }
   // auto=true 时（自动上线）失败不弹 alert、不清掉已存昵称，避免一打开就被打断。
   await doLogin(nick, false);
 }
@@ -182,8 +211,8 @@ async function startHandshakeAsOfferer(to) {
       reportError(to, "createOffer: " + e.message);
       return;
     }
-    if (!offer || !offer.sdp) {
-      reportError(to, "offer 为空");
+    if (!isValidSizedSdp(offer)) {
+      reportError(to, "offer 不合法或超大小限制");
       return;
     }
     try {
@@ -223,6 +252,10 @@ async function answerCall(from, offer) {
     remoteDescSet = true;
     log("已 setRemoteDescription(offer) 并创建 answer，flush 缓冲 ICE:", pendingIce.length);
     await flushPendingIce();
+    if (!isValidSizedSdp(answer)) {
+      reportError(from, "answer 不合法或超大小限制");
+      return;
+    }
     await sendSignal(me, from, "answer", answer);
     log("answer 已写入 →", from);
     addMsg(`已接通 ${from}`, "sys");
@@ -244,6 +277,10 @@ function startPeer(isCaller) {
     onMessage: onDataMessage,
     onStateChange: onRtcState,
     onIceCandidate: (cand) => {
+      if (!isValidSizedIce(cand)) {
+        log("ICE 候选不合法或超大小限制，忽略");
+        return;
+      }
       log("本地 ICE candidate，发往", peerName);
       sendSignal(me, peerName, "ice", cand).catch((e) => log("写 ICE 失败", e));
     },
@@ -584,11 +621,21 @@ function showInvite(from) {
   } catch (e) {
     console.warn("来电聚焦窗口失败:", e);
   }
+
+  // 被叫侧超时：30s 未操作则自动拒绝，避免浮层无限挂起。
+  clearTimeout(inviteTimeout);
+  inviteTimeout = setTimeout(() => {
+    log("来电超时，自动拒绝", from);
+    hideInvite();
+    sendSignal(me, from, "reject", {}).catch(() => {});
+  }, INVITE_TIMEOUT_MS);
 }
 
 function hideInvite() {
   $("inviteOverlay").classList.remove("show");
   pendingInviteFrom = null;
+  clearTimeout(inviteTimeout);
+  inviteTimeout = null;
 }
 
 $("acceptBtn").addEventListener("click", async () => {
