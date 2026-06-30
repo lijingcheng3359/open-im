@@ -329,7 +329,22 @@ function onRtcState(state) {
 }
 
 // ---------- 信令轮询 ----------
+// 顶层守卫：pollSignals 由定时器周期触发且内部多处 await，去重标记
+// processedSignals.add 在 await readMySignals 之后才打上。若两个 tick 重叠，
+// 它们会读到同一批尚未标记的信令、都通过 !processedSignals.has 过滤，
+// 进而对同一个 offer/answer 各 handleSignal 一次。polling 标志保证同一时刻只有一个轮询在跑。
+let polling = false;
 async function pollSignals() {
+  if (polling) return;
+  polling = true;
+  try {
+    await pollSignalsOnce();
+  } finally {
+    polling = false;
+  }
+}
+
+async function pollSignalsOnce() {
   let sigs;
   try {
     sigs = await readMySignals(me, sessionStart);

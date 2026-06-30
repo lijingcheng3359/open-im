@@ -94,6 +94,18 @@ function setBadge(n) {
   chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" }); // 与主题紫一致
 }
 
+// bumpBadge 是「读徽章文本 → +1 → 写回」的 read-modify-write，本身不原子：
+// 两条 incoming 消息并发时可能都读到同一个 cur、各写 cur+1，丢掉一次自增。
+// 这里把所有徽章更新串到一条 promise 队列上顺序执行，杜绝交错。
+// 仍从徽章文本读当前值（而非内存计数）——MV3 service worker 空闲会被回收、
+// 内存计数会丢，而徽章文本由 Chrome 持久保存，不受 SW 回收影响。
+let badgeQueue = Promise.resolve();
+function enqueueBadge(task) {
+  // 无论上一个成功失败都继续，避免一次失败卡死整条队列。
+  badgeQueue = badgeQueue.then(task, task);
+  return badgeQueue;
+}
+
 async function bumpBadge() {
   const text = await chrome.action.getBadgeText({});
   const cur = parseInt(text, 10) || 0;
@@ -102,6 +114,6 @@ async function bumpBadge() {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg.type !== "string") return;
-  if (msg.type === "incoming") bumpBadge();
-  else if (msg.type === "seen") setBadge(0);
+  if (msg.type === "incoming") enqueueBadge(bumpBadge);
+  else if (msg.type === "seen") enqueueBadge(() => setBadge(0));
 });
